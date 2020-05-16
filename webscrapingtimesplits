@@ -1,0 +1,305 @@
+#### Web scraping Standard Chartered Singapore Marathon time splits ####
+
+# Import libraries
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+import pandas as pd
+import datetime
+import time
+import scipy.stats as sts
+import numpy as np
+
+#### Scraping male rankings ####
+
+#Scraping first male ranking page 
+main_base_url = "https://www.sportsplits.com/races/singapore-marathon-2019/events/1/gender/Male?page=1"
+male_table_page1 = pd.read_html(main_base_url)
+male_table_1 = male_table_page1[0]
+response = requests.get(main_base_url)
+html = response.content
+soup = BeautifulSoup(html, "lxml") 
+with open('scmsmalerunners.html', 'wb') as file:
+    file.write(soup.prettify('utf-8'))
+male_divs = soup.find_all("div", {"class": "table-responsive"})
+male_links = [div.find_all('a') for div in male_divs]
+relative_male_url = [link["href"] for link in male_links[0]]
+full_male_url = [urljoin(main_base_url, relativeurl) for relativeurl in relative_male_url]
+full_male_profile_url = [url for url in full_male_url if "?page=1" in url]
+male_table_1["Links"] = full_male_profile_url
+
+# Scraping all male ranking pages
+main_male_table = male_table_1
+
+# Page 1-162 contains all runners who completed the race
+for i in range(2, 163):
+    base_site = "https://www.sportsplits.com/races/singapore-marathon-2019/events/1/gender/Male?page={}".format(i)
+    html_table = pd.read_html(base_site)
+    ranking_table = html_table[0]
+    
+    male_loop_response = requests.get(base_site)
+    
+    if male_loop_response.status_code == 200:
+        print("Page{}: {}".format(i, base_site))
+    
+    else:
+        print('Status code{}: Skipping Page #{}: {}'.format(note_resp.status_code, i, base_site))
+        continue
+    
+    male_loop_html = male_loop_response.content
+    
+    male_loop_soup = BeautifulSoup(male_loop_html, "lxml")
+    
+    male_loop_divs = male_loop_soup.find_all("div", {"class": "table-responsive"})
+    
+    male_loop_links = [div.find_all('a') for div in male_loop_divs]
+    
+    relative_male_loop_url = [link["href"] for link in male_loop_links[0]]
+    
+    full_male_loop_url = [urljoin(base_site, relativeurl) for relativeurl in relative_male_loop_url]
+    
+    full_male_loop_profile_url = [url for url in full_male_loop_url if "?page={}".format(i) in url]
+    
+    ranking_table["Links"] = full_male_loop_profile_url
+    
+    main_male_table = pd.concat([main_male_table, ranking_table], ignore_index=True)
+
+# Remove runners who did not finish the race 
+complete_male_table = main_male_table[main_male_table["Pos"] != "NYS"]
+
+# Subset Singaporean male runners only
+sgp_male_table = complete_male_table[complete_male_table["Representing"] == "SGP  |"]
+sgp_male_table.reset_index(drop=True, inplace = True)
+
+#### Scraping each male runner url link to extract time splits ####
+
+# Create some empty lists to store the respective data
+km5_split = []
+km10_split = []
+km15_split = []
+km20_split = []
+km25_split = []
+km30_split = []
+km35_split = []
+km40_split = []
+
+# A master list to contain all the above lists
+split_lists = [km5_split, km10_split, km15_split, km20_split, km25_split, km30_split, km35_split, km40_split]
+
+# Store the computed coefficient of variation of each runner 
+cov_list = []
+
+# Reference list of distances to obtain the time splits
+distance_list = ["5km", "10km", "15km", "20km", "25km", "30km", "35km", "40km"]
+
+
+for i in range(len(sgp_male_table)):
+    runner_url = sgp_male_table["Links"][i]
+    runner_table = pd.read_html(runner_url)
+    runner_df = runner_table[0]
+    
+    try:
+        validation_test = runner_df.loc[runner_df.Location == "5km"]["Race Time"].values[0]
+        validation_test2 = runner_df.loc[runner_df.Location == "10km"]["Race Time"].values[0]
+    except IndexError:
+        for each_list in split_lists:
+            each_list.append("NA")
+        cov_list.append("NA")
+        continue
+    
+    race_time_list =[]
+    
+    for x in range(len(distance_list)):
+        try:
+            time_distance = runner_df.loc[runner_df.Location == distance_list[x]]["Race Time"].values[0]
+            time_format = time.strptime(time_distance, '%H:%M:%S')
+            total_seconds = time_format.tm_hour*3600 + time_format.tm_min*60 + time_format.tm_sec
+            race_time_list.append(total_seconds)
+            print("Runner{}: {}".format(i, runner_url))
+        except IndexError:
+            print("Runner{}: missing {}".format(i, distance_list[x]))
+            assumed_split_time = race_time_list[x-1] - race_time_list[x-2]
+            modified_total_seconds = race_time_list[x-1] + assumed_split_time
+            race_time_list.append(modified_total_seconds)
+        
+        split_time_list = []
+        a = 0
+        
+        for racetime in race_time_list:
+            split = (racetime - a)/5
+            split_time_list.append(split)
+            a = racetime
+        
+    for number in range(len(split_time_list)):
+        split_lists[number].append(split_time_list[number])
+    
+    split_cov = sts.variation(split_time_list)
+    split_cov = round(split_cov, 5)
+    cov_list.append(split_cov)
+
+# Store data into a dataframe
+runners_df = pd.DataFrame()
+
+runners_df["Speed_5km"] = km5_split
+runners_df["Speed_10km"] = km10_split
+runners_df["Speed_15km"] = km15_split
+runners_df["Speed_20km"] = km20_split
+runners_df["Speed_25km"] = km25_split
+runners_df["Speed_30km"] = km30_split
+runners_df["Speed_35km"] = km35_split
+runners_df["Speed_40km"] = km40_split
+runners_df["COV"] = cov_list
+
+# Merge the splits table with original ranking table
+complete_sgp_male_runners = pd.concat([sgp_male_table, runners_df], axis = 1)
+
+# Export dataframes to csv
+complete_sgp_male_runners.to_csv("complete sgp male runners splits.csv")
+
+#### Scraping female rankings ####
+
+# Scraping first female ranking page
+base_female_url = "https://www.sportsplits.com/races/singapore-marathon-2019/events/1/gender/Female"
+female_table_page1 = pd.read_html(base_female_url)
+female_table_1 = female_table_page1[0]
+female_response = requests.get(base_female_url)
+female_html = female_response.content
+female_soup = BeautifulSoup(female_html, "lxml")
+with open('scmsfemalerunners.html', 'wb') as file:
+    file.write(female_soup.prettify('utf-8'))
+female_divs = female_soup.find_all("div", {"class": "table-responsive"})
+female_links = [div.find_all('a') for div in female_divs]
+relative_female_url = [link["href"] for link in female_links[0]]
+full_female_url = [urljoin(base_female_url, relativeurl) for relativeurl in relative_female_url]
+full_female_profile_url = [url for url in full_female_url if "results/individuals" in url]
+full_female_profile_url   = [url for url in full_female_profile_url if "compare/add" not in url]
+female_table_1["Links"] = full_female_profile_url
+
+# Scraping all female ranking pages
+main_female_table = female_table_1
+
+# Page 1-162 contains all runners who completed the race
+for i in range(2, 43):
+    base_site = "https://www.sportsplits.com/races/singapore-marathon-2019/events/1/gender/Female?page={}".format(i)
+    html_table = pd.read_html(base_site)
+    ranking_table = html_table[0]
+    
+    female_loop_response = requests.get(base_site)
+    
+    if female_loop_response.status_code == 200:
+        print("Page{}: {}".format(i, base_site))
+    
+    else:
+        print('Status code{}: Skipping Page #{}: {}'.format(female_loop_response.status_code, i, base_site))
+        continue
+    
+    female_loop_html = female_loop_response.content
+    
+    female_loop_soup = BeautifulSoup(female_loop_html, "lxml")
+    
+    female_loop_divs = female_loop_soup.find_all("div", {"class": "table-responsive"})
+    
+    female_loop_links = [div.find_all('a') for div in female_loop_divs]
+    
+    relative_female_loop_url = [link["href"] for link in female_loop_links[0]]
+    
+    full_female_loop_url = [urljoin(base_site, relativeurl) for relativeurl in relative_female_loop_url]
+    
+    full_female_loop_profile_url = [url for url in full_female_loop_url if "?page={}".format(i) in url]
+    
+    ranking_table["Links"] = full_female_loop_profile_url
+    
+    main_female_table = pd.concat([main_female_table, ranking_table], ignore_index=True)
+
+# Remove runners who did not finish the race 
+complete_female_table = main_female_table[main_female_table["Pos"] != "NYS"]
+
+# Subset Singaporean female runners only
+sgp_female_table = complete_female_table[complete_female_table["Representing"] == "SGP  |"]
+sgp_female_table.reset_index(drop=True, inplace = True)
+
+#### Scraping each female runner url link for time splits ####
+
+# Create some empty lists to store the respective data
+female_km5_split = []
+female_km10_split = []
+female_km15_split = []
+female_km20_split = []
+female_km25_split = []
+female_km30_split = []
+female_km35_split = []
+female_km40_split = []
+
+# A master list to contain all the above lists
+female_split_lists = [female_km5_split, female_km10_split, female_km15_split, female_km20_split, female_km25_split, 
+                      female_km30_split, female_km35_split, female_km40_split]
+
+# Store the computed coefficient of variation of each runner 
+female_cov_list = []
+
+# Reference list of distances to obtain the time splits
+distance_list = ["5km", "10km", "15km", "20km", "25km", "30km", "35km", "40km"]
+
+
+for i in range(len(sgp_female_table)):
+    runner_url = sgp_female_table["Links"][i]
+    runner_table = pd.read_html(runner_url)
+    runner_df = runner_table[0]
+    
+    try:
+        validation_test = runner_df.loc[runner_df.Location == "5km"]["Race Time"].values[0]
+        validation_test2 = runner_df.loc[runner_df.Location == "10km"]["Race Time"].values[0]
+    except IndexError:
+        for each_list in female_split_lists:
+            each_list.append("NA")
+        female_cov_list.append("NA")
+        continue
+    
+    race_time_list =[]
+    
+    for x in range(len(distance_list)):
+        try:
+            time_distance = runner_df.loc[runner_df.Location == distance_list[x]]["Race Time"].values[0]
+            time_format = time.strptime(time_distance, '%H:%M:%S')
+            total_seconds = time_format.tm_hour*3600 + time_format.tm_min*60 + time_format.tm_sec
+            race_time_list.append(total_seconds)
+            print("Runner{}: {}".format(i, runner_url))
+        except IndexError:
+            print("Runner{}: missing {}".format(i, distance_list[x]))
+            assumed_split_time = race_time_list[x-1] - race_time_list[x-2]
+            modified_total_seconds = race_time_list[x-1] + assumed_split_time
+            race_time_list.append(modified_total_seconds)
+        
+        split_time_list = []
+        a = 0
+        
+        for racetime in race_time_list:
+            split = (racetime - a)/5
+            split_time_list.append(split)
+            a = racetime
+        
+    for number in range(len(split_time_list)):
+        female_split_lists[number].append(split_time_list[number])
+    
+    split_cov = sts.variation(split_time_list)
+    split_cov = round(split_cov, 5)
+    female_cov_list.append(split_cov)
+ 
+# Organise data into dataframe
+female_runners_df = pd.DataFrame()
+
+female_runners_df["Speed_5km"] = female_km5_split
+female_runners_df["Speed_10km"] = female_km10_split
+female_runners_df["Speed_15km"] = female_km15_split
+female_runners_df["Speed_20km"] = female_km20_split
+female_runners_df["Speed_25km"] = female_km25_split
+female_runners_df["Speed_30km"] = female_km30_split
+female_runners_df["Speed_35km"] = female_km35_split
+female_runners_df["Speed_40km"] = female_km40_split
+female_runners_df["COV"] = female_cov_list
+
+# Merge the splits table with original ranking table
+complete_sgp_female_runners = pd.concat([sgp_female_table, female_runners_df], axis = 1)
+
+# Export data to csv
+complete_sgp_female_runners.to_csv("complete sgp female runners splits.csv")
