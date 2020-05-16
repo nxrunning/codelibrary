@@ -1,0 +1,197 @@
+# Import data
+raw_male_data <- read.csv("complete sgp male runners splits.csv")
+raw_female_data <- read.csv("complete sgp female runners splits.csv")
+
+# Remove irrelevant columns
+library(dplyr)
+raw_male_data <- select(raw_male_data, -c(X, Unnamed..7))
+raw_female_data <- select(raw_female_data, -c(X, Unnamed..7))
+
+# Remove invalid runner cases 
+complete_male_data <- na.omit(raw_male_data)
+complete_female_data <- na.omit(raw_female_data)
+
+# Creating a "Group" column
+complete_male_data$Group = NA
+complete_female_data$Group = NA
+
+#### Dividing male runners based on percentiles ####
+total_male_cases <- nrow(complete_male_data)
+top20_percent_male_cases <- floor(0.2*total_male_cases)
+top40_percent_male_cases <- ceiling(0.4*total_male_cases)
+
+# Top 20 percent male runners 
+complete_male_data[1:top20_percent_male_cases, 'Group'] = 0
+
+# Middle 20 percent male runners
+complete_male_data[top40_percent_male_cases:(top40_percent_male_cases+top20_percent_male_cases -1), 
+                   'Group'] = 1
+
+# Bottom 20 percent male runners
+complete_male_data[(total_male_cases-top20_percent_male_cases+1):nrow(complete_male_data), "Group"] = 2
+
+#### Dividing female runners based on percentiles ####
+total_female_cases <- nrow(complete_female_data)
+top20_percent_female_cases <- floor(0.2*total_female_cases)
+top40_percent_female_cases <- ceiling(0.4*total_female_cases)
+
+# Top 20 percent male runners 
+complete_female_data[1:top20_percent_female_cases, 'Group'] = 0
+
+# Middle 20 percent male runners
+complete_female_data[top40_percent_female_cases:(top40_percent_female_cases+top20_percent_female_cases -1),
+                   'Group'] = 1
+
+# Bottom 20 percent male runners
+complete_female_data[(total_female_cases-top20_percent_female_cases+1):nrow(complete_female_data), 
+                     "Group"] = 2
+
+#### Working Data ####
+
+working_male_data <- na.omit(complete_male_data)
+working_female_data <- na.omit(complete_female_data)
+
+# Making the group a factor 
+working_male_data$Group <- factor(working_male_data$Group, levels = c(0, 1, 2),
+                                  labels = c("Fast", "Mid-Pack", "Slow"))
+working_female_data$Group <- factor(working_female_data$Group, levels = c(0, 1, 2),
+                                  labels = c("Fast", "Mid-Pack", "Slow"))
+
+# Compute average speed of each male runner
+working_male_data$AvgSpd <-(working_male_data$Speed_5km+working_male_data$Speed_10km+
+                              working_male_data$Speed_15km+working_male_data$Speed_20km+
+                              working_male_data$Speed_25km+working_male_data$Speed_30km+ 
+                              working_male_data$Speed_35km+working_male_data$Speed_40km)/8
+working_male_data$AvgSpd_kmhour <- round(3600/working_male_data$AvgSpd, 2) 
+
+
+# Compute average speed of each female runner
+working_female_data$AvgSpd <-(working_female_data$Speed_5km+working_female_data$Speed_10km+
+                              working_female_data$Speed_15km+working_female_data$Speed_20km+
+                              working_female_data$Speed_25km+working_female_data$Speed_30km+ 
+                              working_female_data$Speed_35km+working_female_data$Speed_40km)/8
+working_female_data$AvgSpd_kmhour <- round(3600/working_female_data$AvgSpd, 2) 
+
+#### Visualising differences in average speed ####
+
+library(ggplot2)
+library(ggpubr)
+
+# Male 
+male_spd <-ggplot(working_male_data, aes(x = Group, y = AvgSpd_kmhour))+
+  geom_boxplot(notch = TRUE,
+               fill = "dodgerblue2",
+               alpha = 0.7)+
+  labs(y = "Average Speed (km/h)",
+       x = "",
+       caption = "")+
+  ylim(4, 16)+
+  theme_classic()
+
+# Female 
+female_spd <- ggplot(working_female_data, aes(x = Group, y = AvgSpd_kmhour))+
+  geom_boxplot(notch = TRUE,
+               fill = "tomato",
+               alpha = 0.7)+
+  labs(y = "Average Speed (km/h)",
+       x = "",
+       caption = "Data from Standard Chartered Singapore Marathon 2019")+
+  ylim(4, 16)+
+  theme_classic()
+
+#Combined two plots together
+combined_spd <- ggarrange(male_spd, female_spd, labels = c("Male", "Female"), ncol =2, nrow =1,
+                          hjust = c(-1.5, -1), font.label =list(size = 12, face = 'plain'))
+final_spd <- annotate_figure(combined_spd,
+                top = text_grob("Average Marathon Running Speed", face = "bold", size = 15))
+# Save plot
+ggsave(plot = final_spd, filename = "combined_spd.jpeg", dpi = 600)
+
+#### Visualising differences in cov ####
+
+working_male_data$COV_percent <- round(working_male_data$COV*100,2)
+working_female_data$COV_percent <- round(working_female_data$COV*100,2)
+
+
+library(dplyr)
+
+# Male
+male_plot_data <- working_male_data%>%
+  group_by(Group) %>%
+  summarize(n = n(),
+            mean = mean(COV_percent),
+            sd = sd(COV_percent),
+            se = sd/sqrt(n),
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n))
+
+male_cov <-ggplot(data= male_plot_data, aes(x = Group, y = mean, group = 1))+
+  geom_point(size = 3, colour = "dodgerblue2")+
+  geom_line(colour = "black")+
+  geom_errorbar(aes(ymin = mean-ci,
+                    ymax = mean+ci), width = 0.1)+
+  geom_text(aes(label = round(mean, 2), hjust = 1.2, vjust = -0.1))+
+  labs(y = "Pace variation (%)",
+       x = "",
+       caption ="")+
+  theme_classic()
+
+# Female
+
+female_plot_data <- working_female_data%>%
+  group_by(Group) %>%
+  summarize(n = n(),
+            mean = mean(COV_percent),
+            sd = sd(COV_percent),
+            se = sd/sqrt(n),
+            ci = qt(0.975, df = n - 1) * sd / sqrt(n))
+
+female_cov <-ggplot(data= female_plot_data, aes(x = Group, y = mean, group = 1))+
+  geom_point(size = 3, colour = "tomato")+
+  geom_line(colour = "black")+
+  geom_errorbar(aes(ymin = mean-ci,
+                    ymax = mean+ci), width = 0.1)+
+  geom_text(aes(label = round(mean, 2), hjust = 1.2, vjust = -0.1))+
+  labs(y = "Pace variation (%)",
+       x = "",
+       caption = "Data from Standard Chartered Singapore Marathon 2019")+
+  theme_classic()
+
+
+# Combined both cov plots together
+combined_cov <- ggarrange(male_cov, female_cov, labels = c("Male", "Female"), ncol =2, nrow =1,
+                          hjust = c(-1.5, -1.15), font.label =list(size = 12, face = 'plain'))
+final_cov <- annotate_figure(combined_cov,
+                top = text_grob("Variation in Marathon Running Pace", face = "bold", size = 15))
+
+# Save plot
+ggsave(plot = final_cov, filename = "combined_cov.jpeg", dpi = 600)
+
+#### ANOVA to test for mean differences ####
+library(car)
+
+# Checking homogeneity of variance 
+
+# male data violates the homogeneity of variance
+leveneTest(working_male_data$COV_percent, working_male_data$Group, center = mean)
+
+# female data meets the assumption of equal variances
+leveneTest(working_female_data$COV_percent, working_female_data$Group, center = mean)
+  
+# Since levene test is sig for male data, we will use Welch's F instead 
+oneway.test(data = working_male_data, COV_percent~Group)
+
+# One-way anova for female data
+female_anova <- aov(data = working_female_data, COV~Group)
+summary(female_anova)
+summary.lm(female_anova)
+
+# post-hoc for male data
+# Fast differs from both slow and mid pack, but no diff between slow and mid pack
+pairwise.t.test(working_male_data$COV_percent, working_male_data$Group,
+                p.adjust.method = "bonferroni")
+
+
+# post-hoc for female data
+# Fast differs from slow and mid-pack, mid-pack also differs from slow
+pairwise.t.test(working_female_data$COV_percent, working_female_data$Group,
+                p.adjust.method = "bonferroni")
